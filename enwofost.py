@@ -12,6 +12,7 @@ import scipy.stats
 
 from pcse.fileinput import CABOFileReader
 from pcse.models import Wofost71_PP
+from pcse.models import Wofost71_WLP_FD
 from pcse.fileinput import CABOWeatherDataProvider
 from pcse.base.parameter_providers import ParameterProvider
 from pcse.util import WOFOST71SiteDataProvider
@@ -22,7 +23,7 @@ class enwofost():
     """
     enwofost:
     
-    Create n number of ensembles of a WOFOST run with random variations
+    Create n number of ensembles of WOFOST runs with random variations
     to given parameters. Variations are different each iteration.
     
     The module works by iterating through the ensemble runs and generating
@@ -91,10 +92,17 @@ class enwofost():
     
     """
     
-    def __init__(self, en_number):
+    def __init__(self, en_number,mode):
         
         self.en_number = en_number
+        if mode not in ['potential', 'limited']:
+            raise ValueError('mode must be "potential" or "limited"')
         
+        if mode == 'potential':
+            self.runner = Wofost71_PP
+            
+        if mode == 'limited':
+            self.runner = Wofost71_WLP_FD
 
     def _units(self,param_name):
         
@@ -116,6 +124,7 @@ class enwofost():
                               weather_object, agromanagement_object):
         
         self.repo = []
+        self.param_files = []
         
         self.distribution_file = distribution_file
         
@@ -184,10 +193,12 @@ class enwofost():
                         
                         new[name] = np.hstack(zip(new_keys,new_vals))
                         
+            self.param_files.append(new)
             new_parameter_object = ParameterProvider(new,soil_object,site_object)
             
+            
             # instantiate the new version of wofost
-            iter_wof = Wofost71_PP(new_parameter_object, 
+            iter_wof = self.runner(new_parameter_object, 
                                    weather_object, 
                                    agromanagement_object)
                         
@@ -205,6 +216,7 @@ class enwofost():
                                          weather_point, timer_file):
         
         self.repo = []
+        self.param_files = []
         
         self.distribution_file = distribution_file
         
@@ -287,11 +299,13 @@ class enwofost():
                         new[name] = np.hstack(zip(new_keys,new_vals))
             
             
+            self.param_files.append(new)
+            
             # put the new parameters in the parameter object
             parameters = ParameterProvider(new,soil,site)    
 
             # instatiate the new version
-            iter_wof = Wofost71_PP(parameters,  weather, agromanagement)
+            iter_wof = self.runner(parameters,  weather, agromanagement)
             
             # run it
             iter_wof.run_till_terminate()
@@ -300,8 +314,6 @@ class enwofost():
             
             self.repo.append(output)
             
-            return self.repo
-        
     
     def Generate_With_MC_From_Objects(self,numpy_repo,crop_object, soil_object,
                      site_object, weather_object, agromanagement_object):
@@ -382,7 +394,7 @@ class enwofost():
             new_parameter_object = ParameterProvider(new,soil_object,site_object)
 
             # instantiate the new version of wofost
-            iter_wof = Wofost71_PP(new_parameter_object, 
+            iter_wof = self.runner(new_parameter_object, 
                                    weather_object, 
                                    agromanagement_object)
 
