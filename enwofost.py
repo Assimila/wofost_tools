@@ -9,6 +9,7 @@ import pcse
 import copy
 import yaml
 import scipy.stats
+import multiprocessing
 
 from pcse.fileinput import CABOFileReader
 from pcse.models import Wofost71_PP
@@ -123,7 +124,8 @@ class enwofost():
     def Generate_With_Dists_From_Objects(self, distribution_file, crop_object, soil_object, site_object, 
                               weather_object, agromanagement_object):
         
-        self.repo = []
+        manager = multiprocessing.Manager()
+        self.repo = manager.list()
         self.param_files = []
         
         self.distribution_file = distribution_file
@@ -144,6 +146,17 @@ class enwofost():
                     self.new_param_vals[i][self.params['Function_Value'].iloc[n]] = []
                 else:
                     self.new_param_vals[i][self.params['Function_Value'].iloc[n]] = []
+        
+        
+        # define a function that is multiprocessable
+        def multiproc_wofost(input_wofost_object):
+    
+            input_wofost_object.run_till_terminate()
+
+            self.repo.append(input_wofost_object.get_output())
+        
+        # setup somewhere to put the processes
+        active_processes = []        
         
         for i in range(self.en_number):
             
@@ -202,20 +215,23 @@ class enwofost():
                                    weather_object, 
                                    agromanagement_object)
                         
-            # and run it
-            iter_wof.run_till_terminate()
+            # and process it using multiprocessing
+            p = multiprocessing.Process(target=multiproc_wofost, args = (iter_wof,))
+            active_processes.append(p)            
+            p.start()
             
-            # get the output
-            output = iter_wof.get_output()
-            
-            # add it to the repo
-            self.repo.append(output)  
+         
+        for i in active_processes:
+            # make them wait until they are done
+            i.join()
+         
             
 
     def Generate_With_Dists_From_Scratch(self, distribution_file,crop_file, soil_file,
                                          weather_point, timer_file):
         
-        self.repo = []
+        manager = multiprocessing.Manager()
+        self.repo = manager.list()
         self.param_files = []
         
         self.distribution_file = distribution_file
@@ -250,6 +266,15 @@ class enwofost():
 
         # get the agromanager
         agromanagement = YAMLAgroManagementReader(timer_file)
+        
+        # define a function that is multiprocessable
+        def multiproc_wofost(input_wofost_object):
+    
+            input_wofost_object.run_till_terminate()
+
+            self.repo.append(input_wofost_object.get_output())
+        
+        active_processes = []
         
         for i in range(self.en_number):
             
@@ -307,18 +332,21 @@ class enwofost():
             # instatiate the new version
             iter_wof = self.runner(parameters,  weather, agromanagement)
             
-            # run it
-            iter_wof.run_till_terminate()
+            # and process it using multiprocessing
+            p = multiprocessing.Process(target=multiproc_wofost, args = (iter_wof,))
+            active_processes.append(p)            
+            p.start()
         
-            output = iter_wof.get_output()
-            
-            self.repo.append(output)
+        for i in active_processes:
+            # make them wait until they are done
+            i.join()
             
     
     def Generate_With_MC_From_Objects(self,numpy_repo,crop_object, soil_object,
                      site_object, weather_object, agromanagement_object):
     
-        self.repo = []
+        manager = multiprocessing.Manager()
+        self.repo = manager.list()
         
         # open the parameter repo
         distributions = np.load(numpy_repo)['retval'][0]
@@ -333,6 +361,16 @@ class enwofost():
         pkeys = [np.nan,np.nan,0,1,1.3,2,np.nan,np.nan,np.nan,np.nan,\
                 0,0.2,0.4,0.7,0.9,1.6,2,np.nan,np.nan,np.nan,np.nan]
 
+        
+        # define a function that is multiprocessable
+        def multiproc_wofost(input_wofost_object):
+    
+            input_wofost_object.run_till_terminate()
+
+            self.repo.append(input_wofost_object.get_output())
+            
+        active_processes = []
+        
         # iterate through the ensembles
         for i in range(self.en_number):
 
@@ -398,11 +436,15 @@ class enwofost():
                                    weather_object, 
                                    agromanagement_object)
 
-            iter_wof.run_till_terminate()
-
-            output = iter_wof.get_output()
-
-            self.repo.append(output)
+            # and process it using multiprocessing
+            p = multiprocessing.Process(target=multiproc_wofost, args = (iter_wof,))
+            active_processes.append(p)
+            p.start()
+            
+        for i in active_processes:
+            # make them wait until they are done
+            i.join()
+            
             
     def Extract_Params(self,param_names):
                
