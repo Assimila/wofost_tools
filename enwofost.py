@@ -63,33 +63,50 @@ class enwofost():
     
     Example:
     
-    # repo for allot of my data:
-    woroot = '/media/DataShare/Alex/wofost/'
     
-    # create an instance for 20 ensembles
-    ensembles = enwofost(20,'/media/DataShare/Alex/wofost/scripts/par_prior.csv')
+    # create an instance for 20 ensembles in potential mode
+    ensembles = enwofost(20, 'potential')
     
     # To generate them, you can either use raw data files on disk like this:
-    ensembles.Generate_From_Scratch(woroot+'params/henan_crop_params.CAB',
-                              woroot+'params/Hengshui.soil',
-                              woroot+'cabo/henan_s01HB*',
-                              woroot+'params/timer.amgt')
+    ensembles.Generate_From_Scratch('para_prior.csv',
+                                'data/henan_crop_params.CAB',
+                              'data/params/Hengshui.soil',
+                              'data/henan_s01HB*',
+                              data/timer.amgt')
                               
-    # Or you can generate ensembles from opened objects in python. This is important
-    # as you often need to adjust these in an environment e.g. agromanager.
+    # Or you can generate ensembles from opened objects in python like this:
+    # (note - if you generate ensembles from an enwofost object that already has
+    # ensembles, the old ones will be deleted)
+    
+    crop = CABOFileReader('data/henan_crop_params.CAB')
+    soil = CABOFileReader('data/Hengshui.soil')
+    site = WOFOST71SiteDataProvider(WAV=100, CO2=360)
+    parameters = ParameterProvider(crop,soil,site)
+    weather = CABOWeatherDataProvider('data/henan_s01HB*')
+    agromanagement = YAMLAgroManagementReader('data/timer.amgt')
+    
+    ensembles.Generate_With_Dists_From_Objects('par_prior.csv', 
+                                                crop,soil,site,
+                                                weather,agromanagement)
     
     # Once these are done, you can get the basic list of results
+    # this will be n long, where n == number of ensembles
     list_results = ensembles.Get_Outputs()
     
     # or extract them nicely like this:
     dict_of_params = ensembles.Get_Params(['LAI', 'TSWO'])
+    lai_from_ensembles = dict_of_params['LAI']
+    twso_from_ensembles = dict_of_params['TWSO']
     
     # to display the first ensemble
     plt.figure()
-    plt.plot(ensembles.Time(),dict_of_params['LAI'][0])
+    plt.plot(ensembles.Time(),lai_from_ensembles[0])
     
     plt.figure()
-    plt.plot(ensembles.Time(),dict_of_params['TWSO'][0])
+    plt.plot(ensembles.Time(),twso_from_ensembles[0])
+    
+    # or display a PDF image of the ensembles:
+    ensembles.PDF_Image('LAI')
     
     """
     
@@ -124,6 +141,16 @@ class enwofost():
     def Generate_With_Dists_From_Objects(self, distribution_file, crop_object, soil_object, site_object, 
                               weather_object, agromanagement_object):
         
+        """
+        Generate ensembles using established wofost objects from a parameter distribution file.
+        
+            - distribution_file - string of the location where the parameter distribution is.
+            - crop_object - the parameter object.
+            - soil_object - the soil parameter object.
+            - site_object - the site parameter object.
+            - weather_object - the object containing the weather data.
+            - agromanagement_object - the timer object.
+        """
         manager = multiprocessing.Manager()
         self.repo = manager.list()
         self.param_files = []
@@ -156,79 +183,105 @@ class enwofost():
             self.repo.append(input_wofost_object.get_output())
         
         # setup somewhere to put the processes
-        active_processes = []        
+        active_processes = []    
         
-        for i in range(self.en_number):
+        run_on = multiprocessing.cpu_count() - 1
+
+        process_counter = 0
+
+        while process_counter < self.en_number:
             
-            # get a new copy of the parameters
-            new = copy.deepcopy(crop_object)
             
-            # loop through the parameters in the file
-            for j in range(len(self.params)):
-                
-                # separate them out
-                name,mu,min_val,max_val,sigma,func = self.params.iloc[j]
-                
-                # get the distributions                
-                dist = scipy.stats.truncnorm((min_val - mu) / sigma,
-                        (max_val - mu) / sigma, loc=mu, scale=sigma)            
-    
-                # get a new value
-                new_val = dist.rvs(1)[0]
-                
-                # first, reasign the simple single parameters
-                if np.isnan(func) == True:
-                    new[name] = new_val
-                    self.new_param_vals[name].append(new_val)
-                    
-                else:
-                    # first check if there already is a function value in place already
-                    prs_keys = np.array(new[name])[::2]
-                    prs_vals = np.array(new[name])[1::2]
-                    
-                    # quickly add the val to the new _param_values
-                    self.new_param_vals[name][func].append(new_val)
-                    
-                    # reasign the values if the function value is there
-                    if func in prs_keys:
-                        prs_vals[np.where(prs_keys == func)[0][0]] = new_val
-                        new[name] = np.hstack(zip(prs_keys,prs_vals))
-                        
-                    # or put a new one in if it is not there already
+            if len(active_processes) <= run_on:
+            
+                # get a new copy of the parameters
+                new = copy.deepcopy(crop_object)
+
+                # loop through the parameters in the file
+                for j in range(len(self.params)):
+
+                    # separate them out
+                    name,mu,min_val,max_val,sigma,func = self.params.iloc[j]
+
+                    # get the distributions                
+                    dist = scipy.stats.truncnorm((min_val - mu) / sigma,
+                            (max_val - mu) / sigma, loc=mu, scale=sigma)            
+
+                    # get a new value
+                    new_val = dist.rvs(1)[0]
+
+                    # first, reasign the simple single parameters
+                    if np.isnan(func) == True:
+                        new[name] = new_val
+                        self.new_param_vals[name].append(new_val)
+
                     else:
-                        new_keys = np.concatenate([prs_keys,np.array([func])])                        
-                        new_vals = np.concatenate([prs_vals,np.array([new_val])])
-                        
-                        sort_index = np.argsort(new_keys)
-                        
-                        new_keys = new_keys[sort_index]
-                        new_vals = new_vals[sort_index]
-                        
-                        new[name] = np.hstack(zip(new_keys,new_vals))
-                        
-            self.param_files.append(new)
-            new_parameter_object = ParameterProvider(new,soil_object,site_object)
+                        # first check if there already is a function value in place already
+                        prs_keys = np.array(new[name])[::2]
+                        prs_vals = np.array(new[name])[1::2]
+
+                        # quickly add the val to the new _param_values
+                        self.new_param_vals[name][func].append(new_val)
+
+                        # reasign the values if the function value is there
+                        if func in prs_keys:
+                            prs_vals[np.where(prs_keys == func)[0][0]] = new_val
+                            new[name] = np.hstack(zip(prs_keys,prs_vals))
+
+                        # or put a new one in if it is not there already
+                        else:
+                            new_keys = np.concatenate([prs_keys,np.array([func])])                        
+                            new_vals = np.concatenate([prs_vals,np.array([new_val])])
+
+                            sort_index = np.argsort(new_keys)
+
+                            new_keys = new_keys[sort_index]
+                            new_vals = new_vals[sort_index]
+
+                            new[name] = np.hstack(zip(new_keys,new_vals))
+
+                self.param_files.append(new)
+                new_parameter_object = ParameterProvider(new,soil_object,site_object)
+
+
+                # instantiate the new version of wofost
+                iter_wof = self.runner(new_parameter_object, 
+                                       weather_object, 
+                                       agromanagement_object)
+
+                # and process it using multiprocessing
+                p = multiprocessing.Process(target=multiproc_wofost, args = (iter_wof,))
+                p.daemon = True
+                p.name = str(process_counter)
+
+                p.start()
+
+                active_processes.append(p)
+
+                process_counter += 1
             
+            else:
+                
+                for pr in active_processes:
             
-            # instantiate the new version of wofost
-            iter_wof = self.runner(new_parameter_object, 
-                                   weather_object, 
-                                   agromanagement_object)
-                        
-            # and process it using multiprocessing
-            p = multiprocessing.Process(target=multiproc_wofost, args = (iter_wof,))
-            active_processes.append(p)            
-            p.start()
-            
-         
-        for i in active_processes:
-            # make them wait until they are done
-            i.join()
+                    if pr.is_alive() == False:
+
+                        active_processes.remove(pr)                        
          
             
 
     def Generate_With_Dists_From_Scratch(self, distribution_file,crop_file, soil_file,
                                          weather_point, timer_file):
+        
+        """
+        Generate ensembles using strings pointing to the wofost files from a parameter distribution file.
+        
+            - distribution_file - string of the location where the parameter distribution is.
+            - crop_file - the parameter file location string.
+            - soil_file - the soil parameter file location string.
+            - weather_point - the unix wildcard search which identifies the weather data.
+            - timer_file - the timer file location string.
+        """
         
         manager = multiprocessing.Manager()
         self.repo = manager.list()
@@ -274,77 +327,106 @@ class enwofost():
 
             self.repo.append(input_wofost_object.get_output())
         
-        active_processes = []
+        # setup somewhere to put the processes
+        active_processes = []    
         
-        for i in range(self.en_number):
-            
-            # get a clean version of the parameters
-            new = copy.deepcopy(crop)
-            
-            # loop through the parameters in the file
-            for j in range(len(self.params)):
-                name,mu,min_val,max_val,sigma,func = self.params.iloc[j]
-                
-                # get the distributions                
-                dist = scipy.stats.truncnorm((min_val - mu) / sigma,
-                        (max_val - mu) / sigma, loc=mu, scale=sigma)            
-    
-                # get a new value
-                new_val = dist.rvs(1)[0]
-                
-                
-                # first, reasign the simple single parameters
-                if np.isnan(func) == True:
-                    new[name] = new_val
-                    self.new_param_vals[name].append(new_val)
-                    
-                else:
-                    # first check if there already is a function value in place already
-                    prs_keys = np.array(new[name])[::2]
-                    prs_vals = np.array(new[name])[1::2]
-                    
-                    # quickly add the val to the new _param_values
-                    self.new_param_vals[name][func].append(new_val)
-                    
-                    # reasign the values if the function value is there
-                    if func in prs_keys:
-                        prs_vals[np.where(prs_keys == func)[0][0]] = new_val
-                        new[name] = np.hstack(zip(prs_keys,prs_vals))
-                        
-                    # or put a new one in if it is not there already
-                    else:
-                        new_keys = np.concatenate([prs_keys,np.array([func])])                        
-                        new_vals = np.concatenate([prs_vals,np.array([new_val])])
-                        
-                        sort_index = np.argsort(new_keys)
-                        
-                        new_keys = new_keys[sort_index]
-                        new_vals = new_vals[sort_index]
-                        
-                        new[name] = np.hstack(zip(new_keys,new_vals))
-            
-            
-            self.param_files.append(new)
-            
-            # put the new parameters in the parameter object
-            parameters = ParameterProvider(new,soil,site)    
+        run_on = multiprocessing.cpu_count() - 1
+        
+        process_counter = 0
 
-            # instatiate the new version
-            iter_wof = self.runner(parameters,  weather, agromanagement)
+        while process_counter < self.en_number:
             
-            # and process it using multiprocessing
-            p = multiprocessing.Process(target=multiproc_wofost, args = (iter_wof,))
-            active_processes.append(p)            
-            p.start()
-        
-        for i in active_processes:
-            # make them wait until they are done
-            i.join()
+           
+            if len(active_processes) <= run_on:
+            
+                # get a clean version of the parameters
+                new = copy.deepcopy(crop)
+
+                # loop through the parameters in the file
+                for j in range(len(self.params)):
+                    name,mu,min_val,max_val,sigma,func = self.params.iloc[j]
+
+                    # get the distributions                
+                    dist = scipy.stats.truncnorm((min_val - mu) / sigma,
+                            (max_val - mu) / sigma, loc=mu, scale=sigma)            
+
+                    # get a new value
+                    new_val = dist.rvs(1)[0]
+
+
+                    # first, reasign the simple single parameters
+                    if np.isnan(func) == True:
+                        new[name] = new_val
+                        self.new_param_vals[name].append(new_val)
+
+                    else:
+                        # first check if there already is a function value in place already
+                        prs_keys = np.array(new[name])[::2]
+                        prs_vals = np.array(new[name])[1::2]
+
+                        # quickly add the val to the new _param_values
+                        self.new_param_vals[name][func].append(new_val)
+
+                        # reasign the values if the function value is there
+                        if func in prs_keys:
+                            prs_vals[np.where(prs_keys == func)[0][0]] = new_val
+                            new[name] = np.hstack(zip(prs_keys,prs_vals))
+
+                        # or put a new one in if it is not there already
+                        else:
+                            new_keys = np.concatenate([prs_keys,np.array([func])])                        
+                            new_vals = np.concatenate([prs_vals,np.array([new_val])])
+
+                            sort_index = np.argsort(new_keys)
+
+                            new_keys = new_keys[sort_index]
+                            new_vals = new_vals[sort_index]
+
+                            new[name] = np.hstack(zip(new_keys,new_vals))
+
+
+                self.param_files.append(new)
+
+                # put the new parameters in the parameter object
+                parameters = ParameterProvider(new,soil,site)    
+
+                # instatiate the new version
+                iter_wof = self.runner(parameters,  weather, agromanagement)
+
+                # and process it using multiprocessing
+                p = multiprocessing.Process(target=multiproc_wofost, args = (iter_wof,))
+                p.daemon = True
+                p.name = str(process_counter)
+
+                p.start()
+
+                active_processes.append(p)
+
+                process_counter += 1
+            
+            else:
+                
+                for pr in active_processes:
+            
+                    if pr.is_alive() == False:
+
+                        active_processes.remove(pr)    
             
     
     def Generate_With_MC_From_Objects(self,numpy_repo,crop_object, soil_object,
                      site_object, weather_object, agromanagement_object):
     
+        """
+        Generate ensembles using a montecarlo calibration file from wofost objects.
+        
+            - numpy_repo - string of the location where the calibration file is.
+            - crop_object - the parameter object.
+            - soil_object - the soil parameter object.
+            - site_object - the site parameter object.
+            - weather_object - the object containing the weather data.
+            - agromanagement_object - the timer object.
+        """
+        
         manager = multiprocessing.Manager()
         self.repo = manager.list()
         
@@ -368,82 +450,100 @@ class enwofost():
             input_wofost_object.run_till_terminate()
 
             self.repo.append(input_wofost_object.get_output())
-            
-        active_processes = []
         
-        # iterate through the ensembles
-        for i in range(self.en_number):
+        # setup somewhere to put the processes
+        active_processes = []    
+        
+        run_on = multiprocessing.cpu_count() - 1
 
-            # pull out some random index to sample
-            selection = np.random.choice(range(len(distributions[0])))
+        process_counter = 0
 
-            # and pull out that set of parameters
-            param_select = distributions[:,selection]
+        while process_counter < self.en_number:
             
-            # get a clean version of the crop parameters
-            new = copy.deepcopy(crop_object)
+            
+            if len(active_processes) <= run_on:
+            
 
-            # iterate through each parameter and place it in the new crop file
-            for n,j in enumerate(param_select):
-                
-                inst_p = pnames[n]
-                # find the key in the crop parameters
-                if '_' in inst_p:
-                    inst_p = inst_p.split('_')[0]
+                # pull out some random index to sample
+                selection = np.random.choice(range(len(distributions[0])))
 
-                # reassign the simple single parameters
-                if type(new[inst_p]) != list:
-                    new[inst_p] = j
-                
+                # and pull out that set of parameters
+                param_select = distributions[:,selection]
 
-                # then do the array parameters
-                else:
-                       
-                    # find the function values assosiated with each parameter
-                    func_vals = np.array(new[inst_p])[::2]
+                # get a clean version of the crop parameters
+                new = copy.deepcopy(crop_object)
 
-                    # reassign the new values if there is already a function value
-                    if pkeys[n] in func_vals:
-                        replace_index = np.where(func_vals == pkeys[n])[0]
-                        new_param_vals = np.array(new[inst_p])[1::2]
-                        new_param_vals[replace_index] = j
-                        new_insert = np.hstack(zip(func_vals,new_param_vals))
-                        new[inst_p] = list(new_insert)
+                # iterate through each parameter and place it in the new crop file
+                for n,j in enumerate(param_select):
+
+                    inst_p = pnames[n]
+                    # find the key in the crop parameters
+                    if '_' in inst_p:
+                        inst_p = inst_p.split('_')[0]
+
+                    # reassign the simple single parameters
+                    if type(new[inst_p]) != list:
+                        new[inst_p] = j
 
 
-                    # or insert the new function value and the parameter
+                    # then do the array parameters
                     else:
 
-                        new_func_vals = np.concatenate([func_vals,np.array([pkeys[n]])])
+                        # find the function values assosiated with each parameter
+                        func_vals = np.array(new[inst_p])[::2]
 
-                        sort_index = np.argsort(new_func_vals)
+                        # reassign the new values if there is already a function value
+                        if pkeys[n] in func_vals:
+                            replace_index = np.where(func_vals == pkeys[n])[0]
+                            new_param_vals = np.array(new[inst_p])[1::2]
+                            new_param_vals[replace_index] = j
+                            new_insert = np.hstack(zip(func_vals,new_param_vals))
+                            new[inst_p] = list(new_insert)
 
-                        new_param_vals = np.array(new[inst_p][1::2])
-                        new_param_vals = np.concatenate([new_param_vals,np.array([j])])
 
-                        new_func_vals = new_func_vals[sort_index]
-                        new_param_vals = new_param_vals[sort_index]
-                        new_insert = np.hstack(zip(new_func_vals,new_param_vals))
-                        new[inst_p] = list(new_insert)
-                        
-                  
+                        # or insert the new function value and the parameter
+                        else:
 
-         
-            new_parameter_object = ParameterProvider(new,soil_object,site_object)
+                            new_func_vals = np.concatenate([func_vals,np.array([pkeys[n]])])
 
-            # instantiate the new version of wofost
-            iter_wof = self.runner(new_parameter_object, 
-                                   weather_object, 
-                                   agromanagement_object)
+                            sort_index = np.argsort(new_func_vals)
 
-            # and process it using multiprocessing
-            p = multiprocessing.Process(target=multiproc_wofost, args = (iter_wof,))
-            active_processes.append(p)
-            p.start()
+                            new_param_vals = np.array(new[inst_p][1::2])
+                            new_param_vals = np.concatenate([new_param_vals,np.array([j])])
+
+                            new_func_vals = new_func_vals[sort_index]
+                            new_param_vals = new_param_vals[sort_index]
+                            new_insert = np.hstack(zip(new_func_vals,new_param_vals))
+                            new[inst_p] = list(new_insert)
+
+
+
+
+                new_parameter_object = ParameterProvider(new,soil_object,site_object)
+
+                # instantiate the new version of wofost
+                iter_wof = self.runner(new_parameter_object, 
+                                       weather_object, 
+                                       agromanagement_object)
+
+                # and process it using multiprocessing
+                p = multiprocessing.Process(target=multiproc_wofost, args = (iter_wof,))
+                p.daemon = True
+                p.name = str(process_counter)
+
+                p.start()
+
+                active_processes.append(p)
+
+                process_counter += 1
             
-        for i in active_processes:
-            # make them wait until they are done
-            i.join()
+            else:
+                
+                for pr in active_processes:
+            
+                    if pr.is_alive() == False:
+
+                        active_processes.remove(pr)    
             
             
     def Extract_Params(self,param_names):
