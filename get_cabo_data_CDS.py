@@ -1,6 +1,7 @@
 import cdsapi
 from calendar import monthrange
 import os
+import numpy as np
 if os.path.isfile('era2cabo.py') == False:
     raise ValueError('Cant see the conversion tool era2cabo.py. Put this file in the current working environment.')
 from era2cabo import do_conversion
@@ -15,19 +16,20 @@ from era2cabo import do_conversion
 # ------  Download parameters -------
 
 
-years = [2006]
+years = [2017,2018]
 
 # These can be a list that corresponds with the data from sites_lons.
-sites_lats = [35.135916]
-sites_lons = [113.763737]
+sites_lats = [52.444409, 52.785157999999996, 52.50390600000001, 55.647873, 52.692037, 52.248940999999995, 52.920145, 52.602416000000005, 53.051435, 52.620169999999995, 52.78900600000001, 52.683324, 55.056394999999995, 52.795683999999994, 52.869663, 53.168902, 53.134710999999996, 52.707462, 53.038353, 53.193142, 53.201262, 52.261125, 52.644534, 50.940619, 51.130066, 52.644558999999994, 52.701641, 52.7576, 55.106747999999996, 55.367879, 55.716145, 53.106063, 52.483166000000004, 52.486424, 52.747772, 52.968049, 55.528180000000006, 51.101692, 52.370754999999996, 53.180388, 52.294191, 52.626987, 52.191712, 52.214073, 52.840334, 52.31219, 55.643912, 55.647873, 55.666228000000004, 52.88524399999999, 51.029427, 52.8087, 52.784317, 52.263047, 52.199606, 52.89673199999999, 52.259519, 52.240856, 52.788855000000005, 52.360356, 52.871451, 52.398359, 52.760369999999995, 55.729002, 50.834590000000006, 52.607890000000005, 52.267765999999995, 52.629505, 52.61963000000001, 55.660081999999996]
+
+sites_lons = [0.055617207, -1.27299, 1.4123685, -2.4895717, 0.25544855, -0.2128895, -0.33888303, 0.092528846, -0.015903556, 1.1942812, 0.15160122, 0.25499948, -1.5144848, 0.14525589, -0.91690166, -0.98783069, -0.92872414, 0.96982843, -0.66469576, -0.34683597, -0.34767632, 0.93396214, 0.73522422, -2.8628644, -1.5980357, 0.29306459999999995, 0.25165128, -1.017735, -1.5505364, -1.6692243000000002, -2.0316805000000002, -0.89639368, -0.37452276, -0.38067667, 1.3640773000000002, -0.8199214, -2.6427417, -1.5840424, -0.46768366, -0.38373514, 0.99279343, -0.52465923, 1.1879963, 1.1318813, -0.73212415, 0.89895491, -2.2462642999999995, -2.4895717, -2.0035345, 0.69609928, -2.51346, 0.2851057, -0.33368087, -0.6150310999999999, 1.3914779, 0.93948829, -0.12898706, -0.49656229999999996, 0.31940855, 1.2433934, 0.031354667999999995, -0.37620061, 1.3221002, -2.2989933999999996, -2.12099, 0.03951, -1.4425413, 0.33114241, 0.9198799999999999, -2.5310338]
 
 
 # Location string for the timezone conversions.
 # Full list is here https://stackoverflow.com/questions/13866926/is-there-a-list-of-pytz-timezones
-location_tz = 'Asia/Shanghai'
+location_tz = 'Europe/London'
 
 # what to call the data and results
-run_handle = 'henan'
+run_handle = 'uk'
 
 # If you already have the era data downloaded somewhere.
 
@@ -54,7 +56,6 @@ if len(sites_lons) != len(sites_lats):
 ##########################################################
 
 
-
 def find_closest(element = None, search_array = None):
     """
     Function to find the element in the search array that is closest to the element.
@@ -69,12 +70,17 @@ def find_closest(element = None, search_array = None):
     index = np.where((difs == min(difs)) == True)
     return(index,np.array(search_array)[index])
 
+mila = min(sites_lats)
+milo = min(sites_lons)
 
-bl_lon = find_closest(min(sites_lons), [int(min(sites_lons)) + i for i in [0,0.25,0.5,0.75,1]])[1][0]
-bl_lat = find_closest(min(sites_lats), [int(min(sites_lats)) + i for i in [0,0.25,0.5,0.75,1]])[1][0]
+mala = max(sites_lats)
+malo = max(sites_lats)
 
-tr_lon = find_closest(max(sites_lons), [int(max(sites_lons)) + i for i in [0,0.25,0.5,0.75,1]])[1][0]
-tr_lat = find_closest(max(sites_lats), [int(max(sites_lats)) + i for i in [0,0.25,0.5,0.75,1]])[1][0]
+bl_lon = find_closest(milo, [int(milo) + (np.sign(milo)*i) for i in [0,0.25,0.5,0.75,1]])[1][0]
+bl_lat = find_closest(mila, [int(mila) + (np.sign(mila)*i) for i in [0,0.25,0.5,0.75,1]])[1][0]
+
+tr_lon = find_closest(malo, [int(malo) + (np.sign(malo)*i) for i in [0,0.25,0.5,0.75,1]])[1][0]
+tr_lat = find_closest(mala, [int(mala) + (np.sign(mala)*i) for i in [0,0.25,0.5,0.75,1]])[1][0]
 
 for year in years:
 
