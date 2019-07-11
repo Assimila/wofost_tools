@@ -74,7 +74,7 @@ mila = min(sites_lats)
 milo = min(sites_lons)
 
 mala = max(sites_lats)
-malo = max(sites_lats)
+malo = max(sites_lons)
 
 bl_lon = find_closest(milo, [int(milo) + (np.sign(milo)*i) for i in [0,0.25,0.5,0.75,1]])[1][0]
 bl_lat = find_closest(mila, [int(mila) + (np.sign(mila)*i) for i in [0,0.25,0.5,0.75,1]])[1][0]
