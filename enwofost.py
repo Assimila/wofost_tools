@@ -2,12 +2,8 @@ import pandas as pa
 import numpy as np
 import matplotlib.pyplot as plt
 import datetime as dt
-import glob
-import pickle
-import datetime as dt
 import pcse
 import copy
-import yaml
 import scipy.stats
 import multiprocessing
 
@@ -53,7 +49,10 @@ class enwofost():
             Return a dictionary where the keys are the parameter. A
             2D array is in each branch. The dimension n ensembles *
             number of days.
-            
+
+        - Time:
+            Return a list of all the datetimes of each step in the model.
+
         - Get_Outputs:
             Return the list of wofost outputs made in the ensembles.
             
@@ -85,7 +84,7 @@ class enwofost():
     weather = CABOWeatherDataProvider('data/henan_s01HB*')
     agromanagement = YAMLAgroManagementReader('data/timer.amgt')
     
-    ensembles.Generate_With_Dists_From_Objects('par_prior.csv', 
+    ensembles.Generate_With_Dists_From_Objects('par_prior.csv',
                                                 crop,soil,site,
                                                 weather,agromanagement)
     
@@ -191,8 +190,7 @@ class enwofost():
 
         while process_counter < self.en_number:
             
-            
-            if len(active_processes) <= run_on:
+            if len(active_processes) < run_on:
             
                 # get a new copy of the parameters
                 new = copy.deepcopy(crop_object)
@@ -251,11 +249,13 @@ class enwofost():
 
                 # and process it using multiprocessing
                 p = multiprocessing.Process(target=multiproc_wofost, args = (iter_wof,))
+                
                 p.daemon = True
+                
                 p.name = str(process_counter)
 
                 p.start()
-
+                
                 active_processes.append(p)
 
                 process_counter += 1
@@ -263,13 +263,17 @@ class enwofost():
             else:
                 
                 for pr in active_processes:
-            
+                      
                     if pr.is_alive() == False:
-
-                        active_processes.remove(pr)                        
-         
-            
-
+                        
+                        active_processes.remove(pr)     
+                        
+        
+        # dont move on until all processes are done
+        while True in [i.is_alive() for i in active_processes]:
+            pass
+                        
+      
     def Generate_With_Dists_From_Scratch(self, distribution_file,crop_file, soil_file,
                                          weather_point, timer_file):
         
@@ -336,8 +340,7 @@ class enwofost():
 
         while process_counter < self.en_number:
             
-           
-            if len(active_processes) <= run_on:
+            if len(active_processes) < run_on:
             
                 # get a clean version of the parameters
                 new = copy.deepcopy(crop)
@@ -411,7 +414,12 @@ class enwofost():
                     if pr.is_alive() == False:
 
                         active_processes.remove(pr)    
-            
+                        
+     #         # dont move on until all processes are done
+       while True in [i.is_alive() for i in active_processes]:
+            pass
+        
+      
     
     def Generate_With_MC_From_Objects(self,numpy_repo,crop_object, soil_object,
                      site_object, weather_object, agromanagement_object):
@@ -461,7 +469,7 @@ class enwofost():
         while process_counter < self.en_number:
             
             
-            if len(active_processes) <= run_on:
+            if len(active_processes) < run_on:
             
 
                 # pull out some random index to sample
@@ -543,11 +551,15 @@ class enwofost():
             
                     if pr.is_alive() == False:
 
-                        active_processes.remove(pr)    
+                        active_processes.remove(pr)
+
+        # dont move on until all processes are done
+        while True in [i.is_alive() for i in active_processes]:
+            pass
             
             
     def Extract_Params(self,param_names):
-               
+         
         data = {}        
         
         for i in param_names:
