@@ -1,30 +1,27 @@
-def do_conversion(data_file = None, rain_rad_file = None, in_lat = None, in_lon = None,
-                 locality = None, station_number = None, elevation = None,
-                 file_number = None, file_handle = None):
+
+def do_conversion(data_file = None, rain_rad_file = None, in_lat_array = None, in_lon_array = None,
+                 locality = None, file_handle_array = None):
     
     import numpy as np
     import datetime as dt
     import netCDF4 as nc
     from netCDF4 import num2date
     import pytz
+    import pandas as pa
     
     def daily_stat(in_time = None, in_data = None, operation = None):
-        fd = in_time[0]
-        fd = fd - dt.timedelta(hours=fd.hour)
-        ld = in_time[-1]
-        ld = ld - dt.timedelta(hours=ld.hour)
-        # find difference in last and first day
-        dif = (ld -fd).days
-        ret = []
-        # loop through and get daily data
-        for i in range(dif+1):
-            # find the index between each daya
-            within = np.where((in_time >= fd+dt.timedelta(hours=24*i)) & (in_time < fd+dt.timedelta(hours=(24*i) + 24)))[0]
-            # index out the data
-            sec = in_data[within]
-            ret.append(operation(sec))
-        # return daily statistic
-        return np.array(ret)
+        
+        # note to future alex:
+        # the old daily_stat was crap as it looped throgh and found the days in the data
+        # this method splits it up using panadas joojoo and agrigrates it
+        # makes it way faster.
+        
+        dates_array = [d.date() for d in in_time]    
+        df = pa.DataFrame({'dates': dates_array, 'data': in_data})
+        grouped = df.groupby('dates',axis=0)
+        aggrigated = grouped.aggregate(operation)
+
+        return aggrigated['data'].values
 
     def calc_wspeed(u, v):
         wspd = np.sqrt(u*u + v*v)
@@ -66,107 +63,110 @@ def do_conversion(data_file = None, rain_rad_file = None, in_lat = None, in_lon 
 
     # get the years in the data
     years = np.unique([i.year for i in accum_time_local])
-
-    # find the indexes of the site in the data
-    era_lat = find_closest_pixel(in_lat)
-    era_lon = find_closest_pixel(in_lon)
     
+    elevation = 50
     
-    site_lat_ind = find_closest(era_lat,inst_data.variables['latitude'])[0][0][0]
-    site_lon_ind = find_closest(era_lon,inst_data.variables['longitude'])[0][0][0]
-
-    print (site_lon_ind)
-    print (site_lat_ind)
-    
-    
-    # give the header of the CABO file
-    header = '*---------------------------------------------------------------------------*\n*Station name: '+str(in_lat)+' '+str(in_lon)+'\n* Column  Daily value\n* 1       station number\n* 2       year\n* 3       day\n* 4       irradiation                   (kJ m-2 d-1)\n* 5       minimum temperature           (degrees Celsius)\n* 6       maximum temperature           (degrees Celsius)\n* 7       early morning vapour pressure (kPa)\n* 8       mean wind speed (height: 2 m) (m s-1)\n* 9       precipitation                 (mm d-1)\n*\n* '+'era5'+'\n* Created by era2cabo, by Alex \n* File created: ' + str(dt.datetime.today()) +'\n** WCCFORMAT=2\n*---------------------------------------------------------------------------*\n'+'%s'%in_lon+'  '+'%s'%in_lat+'  '+'{:>2.6f}'.format(elevation)+'  -0.180000  -0.550000 \n'
-
-    # loop through each year and make a cabo file for that year
-    for y in years:
-
-        # find a slice of time that fits in the year
-        year_slice = np.where((inst_time_local >= pytz.timezone(locality).
-                           localize(dt.datetime(y,1,1,0,0))) & 
-                          (inst_time_local < pytz.timezone(locality).
-                           localize(dt.datetime(y+1,1,1,0,0))))[0]
-
-        # slice the time
-        year_time = inst_time_local[year_slice]
+    for site_num,(in_lat,in_lon) in enumerate(zip(in_lat_array,in_lon_array)):
         
-        if len(year_time) < 24:
-            print ('Data from file %s covers less than 24 hours for year %s. Annual CABO file ommited for that year.'%(data_file,y))
-            continue
-
-        # find the DoYs of the data
-        doys = np.unique([(i - pytz.timezone(locality).
-                           localize(dt.datetime(y,1,1))).days for i in year_time])
-
-        # set up an empty repo for the data
-        year_data = np.zeros([6,len(doys)])
-    
-        # establish indexes, offsets and scaler for each variable...
-        a_inds = [0,1,2,5]
-        a_operators = [np.sum,np.min,np.max,np.sum]   
-
-        a_offsets = [0,-273.15,-273.15,0]
-        a_scalers = [0.001,1,1,1000]
         
-        # and loop through them for the accumulated data
-        for n,i in enumerate(['ssrd','mn2t','mx2t', 'tp']):
+        site_lat_ind = find_closest(in_lat,inst_data.variables['latitude'])[0][0][0]
+        site_lon_ind = find_closest(in_lon,inst_data.variables['longitude'])[0][0][0]
+        
+        print ('Site %s - lat = %s, lon = %s,'%(site_num,in_lat,in_lon))
+        print ('is is taking ERA5 data from pixel %s Lat, %s Lon.'%(
+        inst_data.variables['latitude'][site_lat_ind],
+        inst_data.variables['longitude'][site_lon_ind]))
+        
+        # give the header of the CABO file
+        header = '*---------------------------------------------------------------------------*\n*Station name: '+str(in_lat)+' '+str(in_lon)+'\n* Column  Daily value\n* 1       station number\n* 2       year\n* 3       day\n* 4       irradiation                   (kJ m-2 d-1)\n* 5       minimum temperature           (degrees Celsius)\n* 6       maximum temperature           (degrees Celsius)\n* 7       early morning vapour pressure (kPa)\n* 8       mean wind speed (height: 2 m) (m s-1)\n* 9       precipitation                 (mm d-1)\n*\n* '+'era5'+'\n* Created by era2cabo, by Alex \n* File created: ' + str(dt.datetime.today()) +'\n** WCCFORMAT=2\n*---------------------------------------------------------------------------*\n'+'%s'%in_lon+'  '+'%s'%in_lat+'  '+'{:>2.6f}'.format(elevation)+'  -0.180000  -0.550000 \n'
+
+        # loop through each year and make a cabo file for that year
+        for y in years:
+           
+            # find a slice of time that fits in the year
+            year_slice = np.where((inst_time_local >= pytz.timezone(locality).
+                               localize(dt.datetime(y,1,1,0,0))) & 
+                              (inst_time_local < pytz.timezone(locality).
+                               localize(dt.datetime(y+1,1,1,0,0))))[0]
+            # slice the time
+            year_time = inst_time_local[year_slice]
+
+            if len(year_time) < 24:
+                print ('Data from file %s covers less than 24 hours for year %s. Annual CABO file ommited for that year.'%(data_file,y))
+                continue
+
+            # find the DoYs of the data
+            doys = np.unique([(i - pytz.timezone(locality).
+                               localize(dt.datetime(y,1,1))).days for i in year_time])
             
-            # get the data
-            param_hourly = accum_data.variables[i][year_slice,site_lat_ind,site_lon_ind]
+            # set up an empty repo for the data
+            year_data = np.zeros([6,len(doys)])
 
-            # compress into daily statistics
-            param_daily = daily_stat(year_time,param_hourly,a_operators[n])  
-            
-            # and add it to the data array
-            year_data[a_inds[n],:] = (param_daily*a_scalers[n]) + a_offsets[n]
+            # establish indexes, offsets and scaler for each variable...
+            a_inds = [0,1,2,5]
+            a_operators = [np.sum,np.min,np.max,np.sum]   
 
-        # do the same for the instantaneos data
-        i_inds = [3,4]
-        i_operators = [np.mean,np.mean]   
+            a_offsets = [0,-273.15,-273.15,0]
+            a_scalers = [0.001,1,1,1000]
 
-        i_offsets = [-273.15,0]
-        i_scalers = [0.1,1]
+            # and loop through them for the accumulated data
+            for n,i in enumerate(['ssrd','mn2t','mx2t', 'tp']):
+        
+                # get the data
+                param_hourly = accum_data.variables[i][year_slice,site_lat_ind,site_lon_ind]
+                
+                # compress into daily statistics
+                param_daily = daily_stat(year_time,param_hourly,a_operators[n])  
+                
+                
+                
+                # and add it to the data array
+                year_data[a_inds[n],:] = (param_daily*a_scalers[n]) + a_offsets[n]
 
-        for n,i in enumerate(['d2m',['u10','v10']]):
+            # do the same for the instantaneos data
+            i_inds = [3,4]
+            i_operators = [np.mean,np.mean]   
 
-            if type(i) == str:
+            i_offsets = [-273.15,0]
+            i_scalers = [0.1,1]
 
-                param_hourly = calc_es(inst_data.variables[i][year_slice,site_lat_ind,site_lon_ind] + i_offsets[n])*i_scalers[n]
+            for n,i in enumerate(['d2m',['u10','v10']]):
 
-                param_daily = daily_stat(year_time,param_hourly,i_operators[n])  
+                if type(i) == str:
 
-                year_data[i_inds[n],:] = param_daily
+                    param_hourly = calc_es(inst_data.variables[i][year_slice,site_lat_ind,site_lon_ind] + i_offsets[n])*i_scalers[n]
 
-            else:
+                    param_daily = daily_stat(year_time,param_hourly,i_operators[n])  
 
-                param_hourly = []
+                    year_data[i_inds[n],:] = param_daily
 
-                for j in i:
+                else:
 
-                    param_hourly.append(inst_data.variables[j][year_slice,site_lat_ind,site_lon_ind])
+                    param_hourly = []
 
-                param_daily = daily_stat(year_time,
-                                         calc_wspeed(param_hourly[0],param_hourly[1]),i_operators[n])
+                    for j in i:
 
-                year_data[i_inds[n],:] = (param_daily*i_scalers[n]) + i_offsets[n] 
-    
-        # put all the data into a cabo file
-        file_year = str(year_time[0].year)[1:]
+                        param_hourly.append(inst_data.variables[j][year_slice,site_lat_ind,site_lon_ind])
 
-        output_filename = file_handle+'_'+str(file_number)+'HB'+'.'+file_year
+                    param_daily = daily_stat(year_time,
+                                             calc_wspeed(param_hourly[0],param_hourly[1]),i_operators[n])
 
-        with open(output_filename, 'w') as f:
-            f.write(header) 
-            for k,thisday in enumerate(doys+1):
+                    year_data[i_inds[n],:] = (param_daily*i_scalers[n]) + i_offsets[n] 
 
-                thisline = '{:>7} {:>2} {:>4} {:>6.0f} {:>6.1f} {:>6.1f} {:>6.3f} {:>6.1f} {:>6.1f} \n'.format(
-                    station_number, year_time[0].year, thisday, year_data[0][k], year_data[1][k], 
-                    year_data[2][k], year_data[3][k], year_data[4][k], year_data[5][k])
+            # put all the data into a cabo file
+            file_year = str(year_time[0].year)[1:]
 
-                f.write(thisline) # write the data to file
-        f.close()
-        print ("File: ", output_filename, "saved successfully.")
+            output_filename = file_handle_array[site_num]+'HB'+'.'+file_year
+
+            with open(output_filename, 'w') as f:
+                f.write(header) 
+                for k,thisday in enumerate(doys+1):
+
+                    thisline = '{:>7} {:>2} {:>4} {:>6.0f} {:>6.1f} {:>6.1f} {:>6.3f} {:>6.1f} {:>6.1f} \n'.format(
+                        1, year_time[0].year, thisday, year_data[0][k], year_data[1][k], 
+                        year_data[2][k], year_data[3][k], year_data[4][k], year_data[5][k])
+
+                    f.write(thisline) # write the data to file
+            f.close()
+            print ("File: ", output_filename, "saved successfully.")
+            print (' ')
