@@ -120,6 +120,8 @@ class enwofost():
             
         if mode == 'limited':
             self.runner = Wofost71_WLP_FD
+            
+        self.rel_rng = 1
 
     def _units(self,param_name):
         
@@ -138,7 +140,7 @@ class enwofost():
     
     
     def Generate_With_Dists_From_Objects(self, distribution_file, crop_object, soil_object, site_object, 
-                              weather_object, agromanagement_object):
+                              weather_object, agromanagement_object, central_value = 'absolute'):
         
         """
         Generate ensembles using established wofost objects from a parameter distribution file.
@@ -148,11 +150,21 @@ class enwofost():
             - soil_object - the soil parameter object.
             - site_object - the site parameter object.
             - weather_object - the object containing the weather data.
-            - agromanagement_object - the timer object.
+            - agromanagement_object - the timer object
+            - central_value - absolute or relative. Either uses the distribution of the input
+                              distribution file as the central mu for parameters. Relative uses
+                              the central value as the current value in the the param generations.
         """
+        
+        if central_value not in ['absolute','relative']:
+            raise ValueError('central_value must be absolute or relative.\
+                             \nAbsolute using the exact distributions from the distribution file.\
+                             \nRelative creates distribuitions around the input crop file.')
+        
         manager = multiprocessing.Manager()
         self.repo = manager.list()
         self.param_files = []
+        self.central_value = central_value
         
         self.distribution_file = distribution_file
         
@@ -198,8 +210,34 @@ class enwofost():
                 # loop through the parameters in the file
                 for j in range(len(self.params)):
 
-                    # separate them out
                     name,mu,min_val,max_val,sigma,func = self.params.iloc[j]
+                    
+                    if self.central_value is 'relative':
+                        if type(crop_object[name]) in [int, float]:
+                            mu = crop_object[name]
+                            # min and max are 3 sigma away from the mean
+                            min_val = mu - (self.rel_rng*sigma)
+                            max_val = mu + (self.rel_rng*sigma)
+                           
+                        else:
+                            if func in new[name]:
+                                loc = np.where(np.array(new[name]) == func)[0][0]
+                                mu = new[name][loc+1]
+                                min_val = mu - (self.rel_rng*sigma)
+                                max_val = mu + (self.rel_rng*sigma)
+                               
+                            else:
+                                # WARNING: 
+                                # if we have gone down this route, it means there
+                                # is no current function value for this parameter.
+                                # this could lead to potentially weird results.
+                                # blind_obedience means to put it in anyway.
+                                blind_obedience = True
+                                if blind_obedience == True:
+                                    pass                                
+                                else: 
+                                    continue 
+                    
 
                     # get the distributions                
                     dist = scipy.stats.truncnorm((min_val - mu) / sigma,
@@ -275,7 +313,7 @@ class enwofost():
                         
       
     def Generate_With_Dists_From_Scratch(self, distribution_file,crop_file, soil_file,
-                                         weather_point, timer_file):
+                                         weather_point, timer_file, central_value = 'absolute'):
         
         """
         Generate ensembles using strings pointing to the wofost files from a parameter distribution file.
@@ -285,8 +323,17 @@ class enwofost():
             - soil_file - the soil parameter file location string.
             - weather_point - the unix wildcard search which identifies the weather data.
             - timer_file - the timer file location string.
+            - central_value - absolute or relative. Either uses the distribution of the input
+                              distribution file as the central mu for parameters. Relative uses
+                              the central value as the current value in the the param generations.
         """
         
+        if central_value not in ['absolute','relative']:
+            raise ValueError('central_value must be absolute or relative.\
+                             \nAbsolute using the exact distributions from the distribution file.\
+                             \nRelative creates distribuitions around the input crop file.')
+        
+        self.central_value = central_value
         manager = multiprocessing.Manager()
         self.repo = manager.list()
         self.param_files = []
@@ -347,12 +394,39 @@ class enwofost():
 
                 # loop through the parameters in the file
                 for j in range(len(self.params)):
+                    
                     name,mu,min_val,max_val,sigma,func = self.params.iloc[j]
+                    
+                    if self.central_value is 'relative':
+                        if type(crop_object[name]) in [int, float]:
+                            mu = crop_object[name]
+                            # min and max are 3 sigma away from the mean
+                            min_val = mu - (self.rel_rng*sigma)
+                            max_val = mu + (self.rel_rng*sigma)
+                           
+                        else:
+                            if func in new[name]:
+                                loc = np.where(np.array(new[name]) == func)[0][0]
+                                mu = new[name][loc+1]
+                                min_val = mu - (self.rel_rng*sigma)
+                                max_val = mu + (self.rel_rng*sigma)
+                               
+                            else:
+                                # WARNING: 
+                                # if we have gone down this route, it means there
+                                # is no current function value for this parameter.
+                                # this could lead to potentially weird results.
+                                # blind_obedience means to put it in anyway.
+                                blind_obedience = True
+                                if blind_obedience == True:
+                                    pass                                
+                                else: 
+                                    continue
 
                     # get the distributions                
                     dist = scipy.stats.truncnorm((min_val - mu) / sigma,
                             (max_val - mu) / sigma, loc=mu, scale=sigma)            
-
+    
                     # get a new value
                     new_val = dist.rvs(1)[0]
 
@@ -416,8 +490,8 @@ class enwofost():
                         active_processes.remove(pr)    
                         
      #         # dont move on until all processes are done
-       while True in [i.is_alive() for i in active_processes]:
-            pass
+#        while True in [i.is_alive() for i in active_processes]:
+#             pass
         
       
     
@@ -581,8 +655,11 @@ class enwofost():
         
         return np.array([i['day'] for i in self.repo[0]])
     
-    def PDF_Image(self,param_name):
-    
+    def PDF_Image(self,param_name, axis = None, cmap = None, max_val = None):
+        
+        if cmap == None:
+            cmap = 'nipy_spectral'
+        
         # which output to display 
         lyr = self.Extract_Params([param_name])[param_name]
 
@@ -666,7 +743,8 @@ class enwofost():
 
             im[:,n0] = ynew
 
-        max_val = np.nanmean(im)*8
+        if max_val == None:
+            max_val = np.nanmean(im)*8
 
         im_cap = np.copy(im)
 
@@ -677,13 +755,23 @@ class enwofost():
         xticks = np.linspace(0,len(self.Time())-1, 8, endpoint= True)
         xlabels = [self.Time()[int(i)] for i in xticks]
         xlabels = ['%s-%s-%s'%(i.year,i.month,i.day) for i in xlabels]
-
-        plt.figure(figsize=(12,6))
-        plt.contourf(xp,yp,im_cap,levels=np.linspace(0,np.nanmax(im_cap),100),cmap='nipy_spectral',)
-      
-        plt.xticks(xticks,xlabels)
-
-        plt.ylabel(self._units(param_name))
         
-        cbar = plt.colorbar()
-        cbar.set_label('PDF',rotation = 270, labelpad = 15)
+        if axis == None:
+        
+            plt.figure(figsize=(12,6))
+            plt.contourf(xp,yp,im_cap,levels=np.linspace(0,np.nanmax(im_cap),100),cmap=cmap)
+
+            plt.xticks(xticks,xlabels)
+
+            plt.ylabel(self._units(param_name))
+
+            cbar = plt.colorbar()
+            cbar.set_label('PDF',rotation = 270, labelpad = 15)
+            
+        else:
+            axis.contourf(xp,yp,im_cap,levels=np.linspace(0,np.nanmax(im_cap),100),cmap=cmap)
+            axis.set_ylabel(self._units(param_name))
+            
+        return im_cap
+
+      
