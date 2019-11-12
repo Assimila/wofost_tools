@@ -150,10 +150,7 @@ class enwofost():
             - soil_object - the soil parameter object.
             - site_object - the site parameter object.
             - weather_object - the object containing the weather data.
-            - agromanagement_object - the timer object
-            - central_value - absolute or relative. Either uses the distribution of the input
-                              distribution file as the central mu for parameters. Relative uses
-                              the central value as the current value in the the param generations.
+            - agromanagement_object - the timer object.
         """
         
         if central_value not in ['absolute','relative']:
@@ -164,7 +161,9 @@ class enwofost():
         manager = multiprocessing.Manager()
         self.repo = manager.list()
         self.param_files = []
+        self.generated_agromanagers = []
         self.central_value = central_value
+        self.original_params = crop_object
         
         self.distribution_file = distribution_file
         
@@ -211,9 +210,11 @@ class enwofost():
                 for j in range(len(self.params)):
 
                     name,mu,min_val,max_val,sigma,func = self.params.iloc[j]
+                    if name == 'PDATE':
+                        continue
                     
                     if self.central_value is 'relative':
-                        if type(crop_object[name]) in [int, float]:
+                        if type(crop_object[name]) in [int, float, np.float64, np.int64]:
                             mu = crop_object[name]
                             # min and max are 3 sigma away from the mean
                             min_val = mu - (self.rel_rng*sigma)
@@ -275,7 +276,44 @@ class enwofost():
                             new_vals = new_vals[sort_index]
 
                             new[name] = np.hstack(zip(new_keys,new_vals))
+                
+                # reassign the planting date based off the normal distribution:
+                # grab the row in the param file that is the planting date
+                if 'PDATE' in self.params['Param'].values:
+                    pdate_row = np.where(self.params['Param'].values == 'PDATE')[0][0]
 
+                    # get the aspects to make the normal distribution
+                    pdate_min = self.params['Min'].values[pdate_row]
+                    pdate_max = self.params['Max'].values[pdate_row]
+                    pdate_mu = self.params['Mean'].values[pdate_row]
+                    pdate_sigma = self.params['StdDev'].values[pdate_row]             
+
+                    # generate the distributions
+                    pdate_dist = scipy.stats.truncnorm((pdate_min - pdate_mu) / pdate_sigma,
+                        (pdate_max - pdate_mu) / pdate_sigma, loc=pdate_mu, scale=pdate_sigma) 
+
+                    # pull out the key for the agromanager
+                    campaign_start = list(agromanagement_object[0].keys())[0]
+
+                    # create a new planting date
+                    new_pdate = agromanagement_object[0][campaign_start]['CropCalendar']['crop_start_date'] + \
+                    dt.timedelta(days=pdate_dist.rvs(1)[0])
+
+                    # make all ensembles have the same campaign length so everything fits
+                    new_campdate = campaign_start - dt.timedelta(days=abs(pdate_min) - 1)
+
+                    # create the new agromanager with the new planting date
+                    new_agromanager = copy.deepcopy(agromanagement_object)[0][campaign_start]
+                    new_agromanager['CropCalendar']['crop_start_date'] = new_pdate
+
+                    new_agro_obj = [{new_campdate:new_agromanager}]
+
+                    # add it to a repo so we have a record of it
+                    self.generated_agromanagers.append(new_agro_obj) 
+                
+                else:
+                    new_agro_obj= agromanagement_object
+                
                 self.param_files.append(new)
                 new_parameter_object = ParameterProvider(new,soil_object,site_object)
 
@@ -283,7 +321,7 @@ class enwofost():
                 # instantiate the new version of wofost
                 iter_wof = self.runner(new_parameter_object, 
                                        weather_object, 
-                                       agromanagement_object)
+                                       new_agro_obj)
 
                 # and process it using multiprocessing
                 p = multiprocessing.Process(target=multiproc_wofost, args = (iter_wof,))
@@ -323,9 +361,6 @@ class enwofost():
             - soil_file - the soil parameter file location string.
             - weather_point - the unix wildcard search which identifies the weather data.
             - timer_file - the timer file location string.
-            - central_value - absolute or relative. Either uses the distribution of the input
-                              distribution file as the central mu for parameters. Relative uses
-                              the central value as the current value in the the param generations.
         """
         
         if central_value not in ['absolute','relative']:
@@ -333,12 +368,13 @@ class enwofost():
                              \nAbsolute using the exact distributions from the distribution file.\
                              \nRelative creates distribuitions around the input crop file.')
         
-        self.central_value = central_value
+        
         manager = multiprocessing.Manager()
         self.repo = manager.list()
         self.param_files = []
-        
+        self.generated_agromanagers = []        
         self.distribution_file = distribution_file
+        self.central_value = central_value
         
         try:
             self.params = pa.read_csv(distribution_file)
@@ -369,7 +405,7 @@ class enwofost():
         weather = CABOWeatherDataProvider(weather_point)
 
         # get the agromanager
-        agromanagement = YAMLAgroManagementReader(timer_file)
+        agromanagement_object = YAMLAgroManagementReader(timer_file)
         
         # define a function that is multiprocessable
         def multiproc_wofost(input_wofost_object):
@@ -396,6 +432,8 @@ class enwofost():
                 for j in range(len(self.params)):
                     
                     name,mu,min_val,max_val,sigma,func = self.params.iloc[j]
+                    if name == 'PDATE':
+                        continue
                     
                     if self.central_value is 'relative':
                         if type(crop_object[name]) in [int, float]:
@@ -461,14 +499,51 @@ class enwofost():
 
                             new[name] = np.hstack(zip(new_keys,new_vals))
 
+                # reassign the planting date based off the normal distribution:
+                # grab the row in the param file that is the planting date
+                if 'PDATE' in self.params['Param'].values:
+                    pdate_row = np.where(self.params['Param'].values == 'PDATE')[0][0]
 
+                    # get the aspects to make the normal distribution
+                    pdate_min = self.params['Min'].values[pdate_row]
+                    pdate_max = self.params['Max'].values[pdate_row]
+                    pdate_mu = self.params['Mean'].values[pdate_row]
+                    pdate_sigma = self.params['StdDev'].values[pdate_row]             
+
+                    # generate the distributions
+                    pdate_dist = scipy.stats.truncnorm((pdate_min - pdate_mu) / pdate_sigma,
+                        (pdate_max - pdate_mu) / pdate_sigma, loc=pdate_mu, scale=pdate_sigma) 
+
+                    # pull out the key for the agromanager
+                    campaign_start = list(agromanagement_object[0].keys())[0]
+
+                    # create a new planting date
+                    new_pdate = agromanagement_object[0][campaign_start]['CropCalendar']['crop_start_date'] + \
+                    dt.timedelta(days=pdate_dist.rvs(1)[0])
+
+                    # make all ensembles have the same campaign length so everything fits
+                    new_campdate = campaign_start - dt.timedelta(days=abs(pdate_min) - 1)
+
+                    # create the new agromanager with the new planting date
+                    new_agromanager = copy.deepcopy(agromanagement_object)[0][campaign_start]
+                    new_agromanager['CropCalendar']['crop_start_date'] = new_pdate
+
+                    new_agro_obj = [{new_campdate:new_agromanager}]
+
+                    # add it to a repo so we have a record of it
+                    self.generated_agromanagers.append(new_agro_obj) 
+                
+                else:
+                    new_agro_obj= agromanagement_object
+                
                 self.param_files.append(new)
+                new_parameter_object = ParameterProvider(new,soil,site)
 
-                # put the new parameters in the parameter object
-                parameters = ParameterProvider(new,soil,site)    
 
-                # instatiate the new version
-                iter_wof = self.runner(parameters,  weather, agromanagement)
+                # instantiate the new version of wofost
+                iter_wof = self.runner(new_parameter_object, 
+                                       weather, 
+                                       new_agro_obj)
 
                 # and process it using multiprocessing
                 p = multiprocessing.Process(target=multiproc_wofost, args = (iter_wof,))
@@ -688,7 +763,7 @@ class enwofost():
             dists[i]['sigma'] = sigma
             dists[i]['min/max'] = [lower,upper]
 
-            im = np.zeros([pix,pix])*np.nan
+        im = np.zeros([pix,pix])*np.nan
 
         for n0,i in enumerate(xp[0]):
             vertical = yp[:,n0]
